@@ -8,11 +8,15 @@
 
 - **Single Binary**: Download and run — no complex setup, no runtime dependencies
 - **Built-in Embedding Models**: Includes multilingual-e5-small-fp16 and bge-small-en-v1.5
-- **YAML Configuration**: Easy-to-use config file for customizing models and settings
+- **Real-time Log Streaming**: Continuously ingest logs via `stdin` pipe or file tailing — model loaded once, stays hot in memory
+- **Batched Worker Pool**: Lines are buffered and embedded in concurrent batches (configurable batch size, flush interval, and worker count) for high-throughput ingestion
+- **Agent-Friendly JSON Output**: `--json` flag on `search` and `grep` emits strict JSON arrays — pipe directly into `jq`, monitoring dashboards, or LLM agents
+- **Colored Terminal UX**: Similarity scores are color-coded (green ≥0.75, yellow ≥0.50, red <0.50) with source highlights for humans
 - **Grep-like Interface**: Familiar command-line interface for semantic search
-- **Vector Database**: Persistent storage for embeddings with automatic deduplication
+- **Vector Database**: Persistent storage for embeddings with atomic writes and automatic deduplication
 - **Intelligent Caching**: SHA256-based file hashing, auto-skip cached files
 - **Cache Management**: Manual and automatic cache cleanup with configurable retention
+- **YAML Configuration**: Easy-to-use config file for customizing models and settings
 - **Cross-platform**: Works on Linux, macOS, and Windows (WebAssembly support planned)
 
 ## Why VipeDB? (Under the Hood)
@@ -105,30 +109,163 @@ This creates a `.vipedb.yaml` configuration file.
 
 ## Usage
 
-### Basic Commands
+### Quick Start
 
 ```bash
-# Initialize configuration
+# 1. Initialize
 ./vipe init
 
-# Index files or text (with automatic caching)
+# 2. Index some files
+./vipe index ./src/
+
+# 3. Search
+./vipe search "connection timeout"
+```
+
+That's it. Three commands to go from zero to semantic search.
+
+### Indexing
+
+```bash
+# Index a single file
 ./vipe index file.txt
-./vipe index ./src/           # Index directory recursively
-./vipe index "some text"      # Index direct text
+
+# Index a directory recursively
+./vipe index ./src/
+
+# Index direct text
+./vipe index "some text to remember"
 
 # Force reindex even if cached
 ./vipe index -force file.txt
+./vipe index -force ./src/
+```
 
-# Search indexed documents
+### Searching
+
+```bash
+# Semantic search across all indexed documents
 ./vipe search "your query"
 
-# Semantic grep (search in files)
-./vipe grep "pattern" file.txt
-./vipe grep -r "pattern" ./src/    # Recursive search
-./vipe grep -k=5 "pattern" file.txt # Top 5 results
-./vipe grep -force "pattern" file.txt # Force reindex target files
+# JSON output for scripts and agents
+./vipe search --json "database error"
 
-# Cache management
+# Pipe JSON into jq
+./vipe search --json "timeout" | jq '.[0]'
+```
+
+**Human output** (default) — colored, scored, and easy to scan:
+
+```
+  1. [Score: 0.9142] src/server.go
+     connection timed out after 30s, retrying...
+
+  2. [Score: 0.7831] src/client.go
+     dial tcp: connection refused
+```
+
+**Agent output** (`--json`) — strict JSON array, no colors, no noise:
+
+```json
+[
+  {
+    "rank": 1,
+    "text": "connection timed out after 30s, retrying...",
+    "score": 0.9142,
+    "source": "src/server.go",
+    "document_id": "src/server.go:connection timed out after 30s, retrying..."
+  }
+]
+```
+
+### Semantic Grep
+
+```bash
+# Search in specific files
+./vipe grep "user login" file.txt
+
+# Recursive search in a directory
+./vipe grep -r "error handling" ./src/
+
+# Limit results
+./vipe grep -k=5 "authentication" ./src/
+
+# JSON output
+./vipe grep --json -r "null pointer" ./src/
+
+# Force reindex target files before searching
+./vipe grep -force "new feature" main.go
+```
+
+### Real-time Log Streaming
+
+The `stream` command loads the embedding model **once** into memory and then continuously ingests text — ideal for real-time log analysis, monitoring pipelines, and autonomous agents.
+
+#### Pipe from stdin
+
+```bash
+# Stream system logs
+tail -f /var/log/syslog | ./vipe stream
+
+# Stream Docker container logs
+docker logs -f my-app 2>&1 | ./vipe stream
+
+# Stream journald
+journalctl -f | ./vipe stream
+
+# Stream Kubernetes pod logs
+kubectl logs -f deployment/my-app | ./vipe stream
+```
+
+#### Tail a file directly
+
+```bash
+# Monitor an application log file (no external piping needed)
+./vipe stream --tail /var/log/app.log
+
+# Monitor with custom batch settings
+./vipe stream --tail /var/log/app.log --batch-size 100 --flush-interval 5s
+```
+
+#### Tuning the Stream Pipeline
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--tail <path>` | _(stdin)_ | Tail a file instead of reading stdin |
+| `--batch-size <n>` | `50` | Number of lines collected before triggering an embedding batch |
+| `--flush-interval <dur>` | `2s` | Max time to wait before flushing a partial batch |
+| `--workers <n>` | `4` | Number of concurrent embedding workers in the EnginePool |
+
+```bash
+# High-throughput: large batches, more workers
+tail -f /var/log/nginx/access.log | ./vipe stream --batch-size 200 --workers 8
+
+# Low-latency: small batches, fast flush
+./vipe stream --tail /var/log/app.log --batch-size 10 --flush-interval 500ms
+```
+
+**How it works:**
+
+1. Lines flow in from `stdin` or the tailed file
+2. A batch collector buffers lines until `--batch-size` is reached **or** `--flush-interval` fires — whichever comes first
+3. The batch is dispatched to the worker pool, where `--workers` concurrent embedding pipelines process lines in parallel
+4. Embeddings are atomically flushed to the persistent `.vipedb` storage (temp file → fsync → rename)
+5. On `SIGTERM`/`SIGINT`, the remaining buffer is drained and flushed before exit
+
+While `stream` is running, you can open another terminal and search the ingested logs in real-time:
+
+```bash
+# Terminal 1: stream logs
+tail -f /var/log/syslog | ./vipe stream
+
+# Terminal 2: search what's been ingested
+./vipe search "out of memory"
+./vipe search --json "segfault" | jq '.[].score'
+```
+
+### Cache Management
+
+```bash
 ./vipe cache list              # List cached files
 ./vipe cache clear             # Clear all cache
 ./vipe cache clear "*.log"     # Clear files matching pattern
@@ -136,13 +273,13 @@ This creates a `.vipedb.yaml` configuration file.
 ./vipe cache clean 24h         # Clean entries older than 24h
 ```
 
-### Command-Line Options
+### Global Options
 
 | Flag | Description |
 |------|-------------|
 | `-config` | Path to config file (default: `.vipedb.yaml`) |
 | `-force` | Force reindex even if file is cached |
-| `-verbose` | Enable verbose output |
+| `-verbose` | Enable verbose output (shows stats, batch flushes, etc.) |
 | `-version` | Show version |
 
 ### Configuration
@@ -191,7 +328,46 @@ cache:
   auto_clean: true
 ```
 
-### Examples
+### Recipes
+
+#### DevOps: Monitor Production Logs in Real-time
+
+```bash
+# Terminal 1: continuously ingest logs
+tail -f /var/log/nginx/access.log | ./vipe stream --batch-size 100 --workers 8
+
+# Terminal 2: query when an alert fires
+./vipe search --json "502 bad gateway" | jq '.[] | select(.score > 0.7)'
+```
+
+#### CI/CD: Search Build Logs for Failures
+
+```bash
+# Pipe build output into VipeDB
+make build 2>&1 | ./vipe stream
+
+# Then query the results
+./vipe search --json "undefined reference" | jq '.[0].text'
+```
+
+#### Agent Integration: LLM-powered Log Analysis
+
+```bash
+# Stream logs, then let an LLM agent search semantically
+./vipe stream --tail /var/log/app.log &
+
+# Agent queries via JSON, pipes results to another LLM
+RESULTS=$(./vipe search --json "authentication failure")
+echo "$RESULTS" | llm "Summarize these auth failures and suggest fixes"
+```
+
+#### Multilingual Search
+
+```bash
+# Configure multilingual-e5-small in .vipedb.yaml, then:
+./vipe search "recherche sémantique"
+./vipe search "意味検索"
+```
 
 #### Index a Codebase
 
@@ -206,57 +382,26 @@ cache:
 ./vipe search "handle errors gracefully"
 ```
 
-#### Semantic Grep
-
-```bash
-# Find code related to authentication (only in specified files)
-./vipe grep -r "user login" ./src/
-
-# Search documentation with custom result count
-./vipe grep -k=10 "API documentation" ./docs/
-
-# Force grep to reindex target files
-./vipe grep -force "new feature" main.go
-```
-
-#### Cache Management
-
-```bash
-# Check what's cached
-./vipe cache list
-# Output:
-# Cached files (2):
-#   src/main.go (150 docs, 2026-04-06 10:30)
-#   src/utils.go (80 docs, 2026-04-06 10:30)
-# Stats: Files: 2, Docs: 230, Retention: 720h0m0s, AutoClean: true
-
-# Clean old entries (older than retention period)
-./vipe cache clean
-
-# Clean specific pattern
-./vipe cache clear "*.backup"
-
-# Clear all cache to force complete reindex
-./vipe cache clear
-```
-
-#### Multiple Models
-
-```bash
-# Use multilingual model
-./vipe --config .vipedb.yaml search "recherche sémantique"
-```
-
 ## Architecture
 
 ```
 vipe (CLI)
 ├── Embedding Service (MemRAG)
-│   ├── BGE-small-en-v1.5
-│   └── multilingual-e5-small-fp16
+│   ├── Single-use Service (index, search, grep)
+│   └── EnginePool (stream) — N concurrent pipelines, channel-based
+│       ├── BGE-small-en-v1.5
+│       └── multilingual-e5-small-fp16
+├── Stream Pipeline
+│   ├── stdin reader / File Tailer (poll-based, rotation-safe)
+│   ├── Batch Collector (size-triggered + time-triggered flush)
+│   └── Worker Pool (concurrent embed → atomic store flush)
 ├── Vector Store
-│   ├── In-memory index (deduplicated)
-│   └── Persistent storage (.vipedb/)
+│   ├── In-memory index (RWMutex, deduplicated)
+│   ├── Persistent storage (.vipedb/index.bin)
+│   └── Atomic save (temp file → fsync → rename)
+├── Output Formatter
+│   ├── Colored terminal (fatih/color)
+│   └── Strict JSON (--json)
 ├── Cache Index
 │   ├── SHA256 file hashing
 │   ├── ModTime/Size validation
@@ -286,6 +431,15 @@ vipe (CLI)
 ./vipe index -force ./src/
 # Output: Indexed 500 documents (total: 500)
 ```
+
+## Thread Safety & Concurrent Access
+
+VipeDB is designed for concurrent use:
+
+- **Vector Store** uses `sync.RWMutex` — multiple `search` processes can read simultaneously while `stream` writes
+- **Atomic Save** ensures the index file is never corrupted, even if a `search` reads during a `stream` flush (temp file → fsync → rename)
+- **EnginePool** distributes embedding pipelines across workers via a buffered channel — zero mutex contention on the hot path
+- **Graceful Shutdown** on `SIGTERM`/`SIGINT` drains the line buffer and flushes the final batch before exiting
 
 ## Model Support
 

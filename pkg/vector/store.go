@@ -85,14 +85,33 @@ func (s *Store) Save() error {
 	}
 
 	indexFile := filepath.Join(s.indexDir, "index.bin")
-	f, err := os.Create(indexFile)
+
+	// Atomic write: temp file -> fsync -> rename
+	f, err := os.CreateTemp(s.indexDir, "index-*.bin.tmp")
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	tmpName := f.Name()
 
 	enc := gob.NewEncoder(f)
-	return enc.Encode(s.documents)
+	if err := enc.Encode(s.documents); err != nil {
+		f.Close()
+		os.Remove(tmpName)
+		return err
+	}
+
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tmpName)
+		return err
+	}
+
+	if err := f.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+
+	return os.Rename(tmpName, indexFile)
 }
 
 func (s *Store) Load() error {

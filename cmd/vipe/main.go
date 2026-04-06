@@ -1,16 +1,21 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/hashemzargari/vipedb/internal/config"
 	"github.com/hashemzargari/vipedb/internal/embedding"
+	"github.com/hashemzargari/vipedb/internal/output"
+	"github.com/hashemzargari/vipedb/internal/stream"
 	"github.com/hashemzargari/vipedb/pkg/vector"
 )
 
@@ -62,6 +67,8 @@ func run() int {
 		return cmdSearch(cfg, args)
 	case "grep":
 		return cmdGrep(cfg, args, *force)
+	case "stream":
+		return cmdStream(cfg, args)
 	case "cache":
 		return cmdCache(cfg, args)
 	default:
@@ -72,7 +79,7 @@ func run() int {
 }
 
 func printUsage() {
-	fmt.Println(`vipe - semantic search tool
+	fmt.Println(`vipe - AI-powered semantic search & real-time log analyzer
 
 Usage:
   vipe <command> [options]
@@ -82,21 +89,32 @@ Commands:
   index             Index files or text
   search            Search indexed documents
   grep              Semantic grep (search for pattern in files)
+  stream            Real-time persistent log ingestion
   cache             Manage cache (list, clear, clean)
 
-Options:
+Global Options:
   -force            Force reindex even if file is cached
   -config           Path to config file (default: .vipedb.yaml)
   -verbose          Enable verbose output
 
+Search/Grep Options:
+  --json            Output results as strict JSON (for agents & pipelines)
+
+Stream Options:
+  --tail <path>           Tail a file instead of reading stdin
+  --batch-size <n>        Lines per batch (default: 50)
+  --flush-interval <dur>  Batch flush interval (default: 2s)
+  --workers <n>           Concurrent embedding workers (default: 4)
+
 Examples:
   vipe init
   vipe index file.txt
-  vipe index -force ./src/
-  vipe search "machine learning"
+  vipe search "connection timeout"
+  vipe search --json "database error" | jq .
   vipe grep -r "error handling" ./src/
-  vipe cache list
-  vipe cache clear`)
+  tail -f /var/log/syslog | vipe stream
+  vipe stream --tail /var/log/app.log
+  vipe cache list`)
 }
 
 func cmdInit(cfg *config.Config, configPath string) int {
@@ -306,8 +324,12 @@ func indexText(ctx context.Context, embService *embedding.Service, store *vector
 }
 
 func cmdSearch(cfg *config.Config, args []string) int {
+	// Parse --json flag from args
+	var jsonOutput bool
+	args, jsonOutput = extractFlag(args, "--json")
+
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: vipe search <query>")
+		fmt.Fprintln(os.Stderr, "Usage: vipe search [--json] <query>")
 		return 1
 	}
 
@@ -346,22 +368,22 @@ func cmdSearch(cfg *config.Config, args []string) int {
 
 	results := store.Search(queryEmb, cfg.Search.DefaultTopK)
 	if len(results) == 0 {
-		fmt.Println("No results found")
+		if jsonOutput {
+			fmt.Println("[]")
+		} else {
+			fmt.Println("No results found")
+		}
 		return 0
 	}
 
-	for i, result := range results {
-		fmt.Printf("%d. [%s] (score: %.4f)\n   %s\n", i+1, result.DocumentID, result.Score, result.Content)
-		if source, ok := result.Metadata["source"]; ok {
-			fmt.Printf("   Source: %s\n", source)
-		}
-		fmt.Println()
-	}
-
+	output.PrintSearchResults(os.Stdout, results, jsonOutput)
 	return 0
 }
 
 func cmdGrep(cfg *config.Config, args []string, force bool) int {
+	var jsonOutput bool
+	args, jsonOutput = extractFlag(args, "--json")
+
 	recursive := false
 	topK := cfg.Search.DefaultTopK
 
@@ -475,22 +497,13 @@ func cmdGrep(cfg *config.Config, args []string, force bool) int {
 	}
 
 	if len(results) == 0 {
+		if jsonOutput {
+			fmt.Println("[]")
+		}
 		return 0
 	}
 
-	for _, result := range results {
-		source := ""
-		if s, ok := result.Metadata["source"]; ok {
-			source = s
-		}
-
-		if source != "" {
-			fmt.Printf("%s: %s\n", source, result.Content)
-		} else {
-			fmt.Println(result.Content)
-		}
-	}
-
+	output.PrintGrepResults(os.Stdout, results, jsonOutput)
 	return 0
 }
 
@@ -554,10 +567,141 @@ func cmdCache(cfg *config.Config, args []string) int {
 	return 0
 }
 
+func cmdStream(cfg *config.Config, args []string) int {
+	fs := flag.NewFlagSet("stream", flag.ContinueOnError)
+	tailPath := fs.String("tail", "", "path to file to tail")
+	batchSize := fs.Int("batch-size", 50, "lines per batch")
+	flushInterval := fs.Duration("flush-interval", 2*time.Second, "batch flush interval")
+	workers := fs.Int("workers", 4, "concurrent embedding workers")
+
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+
+	modelName := cfg.Models.DefaultModel
+	modelPath := cfg.ModelPath(modelName)
+	if modelPath == "" {
+		fmt.Fprintf(os.Stderr, "Model not found for %s\n", modelName)
+		return 1
+	}
+
+	descriptorName := cfg.ModelDescriptor(modelName)
+	fmt.Fprintf(os.Stderr, "[stream] Loading EnginePool (%d workers, model: %s)...\n", *workers, descriptorName)
+
+	pool, err := embedding.NewPool(embedding.ModelConfig{
+		DescriptorName: descriptorName,
+		ModelDir:       modelPath,
+	}, *workers)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating engine pool: %v\n", err)
+		return 1
+	}
+	defer pool.Close()
+
+	store := vector.NewStore(cfg.Index.Directory)
+	if err := store.Load(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading index: %v\n", err)
+		return 1
+	}
+
+	source := "stdin"
+	if *tailPath != "" {
+		source = *tailPath
+	}
+
+	sCfg := stream.Config{
+		BatchSize:     *batchSize,
+		FlushInterval: *flushInterval,
+		Workers:       *workers,
+		Source:        source,
+		Verbose:       cfg.General.Verbose,
+	}
+
+	str := stream.New(pool, store, sCfg)
+
+	// Signal handling for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-sigCh
+		fmt.Fprintf(os.Stderr, "\n[stream] Shutting down, flushing final buffer...\n")
+		cancel()
+	}()
+
+	str.Run(ctx)
+
+	fmt.Fprintf(os.Stderr, "[stream] Listening on %s (batch=%d, interval=%s, workers=%d)\n",
+		source, *batchSize, *flushInterval, *workers)
+
+	// Verbose stats ticker
+	if cfg.General.Verbose {
+		go func() {
+			ticker := time.NewTicker(10 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					ingested, batches := str.Stats()
+					fmt.Fprintf(os.Stderr, "[stream] stats: %d lines ingested, %d batches flushed\n", ingested, batches)
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
+	// Input source: either tail a file or read stdin
+	if *tailPath != "" {
+		tailer := stream.NewTailer(*tailPath)
+		if err := tailer.Run(ctx, func(line string) {
+			str.AddLine(ctx, line, *tailPath)
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "[stream] tail error: %v\n", err)
+			cancel()
+		}
+	} else {
+		scanner := bufio.NewScanner(os.Stdin)
+		// Pre-allocate scanner buffer to reduce GC pressure
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			if ctx.Err() != nil {
+				break
+			}
+			line := scanner.Text()
+			if line != "" {
+				str.AddLine(ctx, line, "stdin")
+			}
+		}
+		if err := scanner.Err(); err != nil && ctx.Err() == nil {
+			fmt.Fprintf(os.Stderr, "[stream] stdin error: %v\n", err)
+		}
+		// stdin closed (pipe ended), trigger shutdown
+		cancel()
+	}
+
+	str.Wait()
+
+	ingested, batches := str.Stats()
+	fmt.Fprintf(os.Stderr, "[stream] Stopped. Ingested: %d lines, Batches flushed: %d, Total docs: %d\n",
+		ingested, batches, store.Count())
+	return 0
+}
+
+func extractFlag(args []string, flag string) ([]string, bool) {
+	for i, arg := range args {
+		if arg == flag {
+			return append(args[:i], args[i+1:]...), true
+		}
+	}
+	return args, false
+}
+
 func isTextFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	textExts := map[string]bool{
-		".txt": true, ".md": true, ".go": true, ".py": true, ".js": true,
+		".txt": true, ".md": true, ".go": true, ".py": true, ".js": true, ".log": true,
 		".ts": true, ".rs": true, ".c": true, ".cpp": true, ".h": true,
 		".java": true, ".rb": true, ".sh": true, ".yaml": true, ".yml": true,
 		".json": true, ".xml": true, ".html": true, ".css": true, ".sql": true,
