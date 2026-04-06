@@ -28,7 +28,7 @@ jobs:
 
       - name: Configure Git to access private modules
         run: |
-          git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global url."https://${{ secrets.PAT_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Configure GOPRIVATE
         run: |
@@ -64,7 +64,7 @@ jobs:
 
       - name: Configure Git to access private modules
         run: |
-          git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global url."https://${{ secrets.PAT_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Configure GOPRIVATE
         run: |

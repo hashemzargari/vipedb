@@ -8,7 +8,9 @@
 - **Built-in Embedding Models**: Includes multilingual-e5-small-fp16 and bge-small-en-v1.5
 - **YAML Configuration**: Easy-to-use config file for customizing models and settings
 - **Grep-like Interface**: Familiar command-line interface for semantic search
-- **Vector Database**: Persistent storage for embeddings
+- **Vector Database**: Persistent storage for embeddings with automatic deduplication
+- **Intelligent Caching**: SHA256-based file hashing, auto-skip cached files
+- **Cache Management**: Manual and automatic cache cleanup with configurable retention
 - **Cross-platform**: Works on Linux, macOS, and Windows (WebAssembly support planned)
 
 ## Installation
@@ -48,10 +50,13 @@ This creates a `.vipedb.yaml` configuration file.
 # Initialize configuration
 ./vipe init
 
-# Index files or text
+# Index files or text (with automatic caching)
 ./vipe index file.txt
 ./vipe index ./src/           # Index directory recursively
 ./vipe index "some text"      # Index direct text
+
+# Force reindex even if cached
+./vipe index -force file.txt
 
 # Search indexed documents
 ./vipe search "your query"
@@ -60,7 +65,24 @@ This creates a `.vipedb.yaml` configuration file.
 ./vipe grep "pattern" file.txt
 ./vipe grep -r "pattern" ./src/    # Recursive search
 ./vipe grep -k=5 "pattern" file.txt # Top 5 results
+./vipe grep -force "pattern" file.txt # Force reindex target files
+
+# Cache management
+./vipe cache list              # List cached files
+./vipe cache clear             # Clear all cache
+./vipe cache clear "*.log"     # Clear files matching pattern
+./vipe cache clean             # Clean expired entries
+./vipe cache clean 24h         # Clean entries older than 24h
 ```
+
+### Command-Line Options
+
+| Flag | Description |
+|------|-------------|
+| `-config` | Path to config file (default: `.vipedb.yaml`) |
+| `-force` | Force reindex even if file is cached |
+| `-verbose` | Enable verbose output |
+| `-version` | Show version |
 
 ### Configuration
 
@@ -73,7 +95,7 @@ models:
   models:
     bge-small: bge-small-en-v1.5
     e5-small: multilingual-e5-small-fp16
-    minilm: paraphrase-multilingual-MiniLM-L12-v2
+    minilm: paraphrase-multilingual-MiniLM-12-v2
 
 index:
   directory: ./.vipedb         # Index storage directory
@@ -82,8 +104,30 @@ search:
   default_top_k: 10            # Default number of results
   threshold: 0.0               # Minimum similarity threshold
 
+cache:
+  enabled: true                # Enable caching
+  directory: ./.vipedb/cache   # Cache storage directory
+  retention: 720h              # Cache retention (30 days)
+  auto_clean: true             # Auto-clean expired entries
+
 general:
   verbose: false               # Enable verbose output
+```
+
+### Cache Configuration
+
+The cache system automatically tracks indexed files using SHA256 hashes:
+
+- **enabled**: Enable or disable caching (default: true)
+- **directory**: Where cache metadata is stored
+- **retention**: How long to keep cache entries (format: `24h`, `720h`, etc.)
+- **auto_clean**: Automatically remove expired entries on startup
+
+```yaml
+cache:
+  enabled: true
+  retention: 168h    # 7 days
+  auto_clean: true
 ```
 
 ### Examples
@@ -91,8 +135,11 @@ general:
 #### Index a Codebase
 
 ```bash
-# Index all source files
+# Index all source files (cached automatically)
 ./vipe index ./src/
+
+# Force reindex after code changes
+./vipe index -force ./src/
 
 # Search for error handling patterns
 ./vipe search "handle errors gracefully"
@@ -101,11 +148,35 @@ general:
 #### Semantic Grep
 
 ```bash
-# Find code related to authentication
+# Find code related to authentication (only in specified files)
 ./vipe grep -r "user login" ./src/
 
-# Search documentation
+# Search documentation with custom result count
 ./vipe grep -k=10 "API documentation" ./docs/
+
+# Force grep to reindex target files
+./vipe grep -force "new feature" main.go
+```
+
+#### Cache Management
+
+```bash
+# Check what's cached
+./vipe cache list
+# Output:
+# Cached files (2):
+#   src/main.go (150 docs, 2026-04-06 10:30)
+#   src/utils.go (80 docs, 2026-04-06 10:30)
+# Stats: Files: 2, Docs: 230, Retention: 720h0m0s, AutoClean: true
+
+# Clean old entries (older than retention period)
+./vipe cache clean
+
+# Clean specific pattern
+./vipe cache clear "*.backup"
+
+# Clear all cache to force complete reindex
+./vipe cache clear
 ```
 
 #### Multiple Models
@@ -123,11 +194,36 @@ vipe (CLI)
 │   ├── BGE-small-en-v1.5
 │   └── multilingual-e5-small-fp16
 ├── Vector Store
-│   ├── In-memory index
+│   ├── In-memory index (deduplicated)
 │   └── Persistent storage (.vipedb/)
+├── Cache Index
+│   ├── SHA256 file hashing
+│   ├── ModTime/Size validation
+│   └── Retention policy
 └── Search Engine
     ├── Cosine similarity
-    └── Top-K retrieval
+    └── Source file filtering
+```
+
+## How Caching Works
+
+1. **First Index**: File is read, hashed with SHA256, embeddings generated, stored in index
+2. **Subsequent Index**: File's hash is compared with cache; if unchanged, skip indexing
+3. **Force Index**: Use `-force` flag to bypass cache and reindex
+4. **Expiration**: Entries older than `retention` period are auto-cleaned (if `auto_clean: true`)
+
+```bash
+# First run - indexes everything
+./vipe index ./src/
+# Output: Indexed 500 documents (total: 500)
+
+# Second run - uses cache
+./vipe index ./src/
+# Output: Indexed 0 documents (skipped 500 cached) (total: 500)
+
+# Force reindex after changes
+./vipe index -force ./src/
+# Output: Indexed 500 documents (total: 500)
 ```
 
 ## Model Support
@@ -154,13 +250,20 @@ go build -o vipe ./cmd/vipe
 go test ./...
 ```
 
-## WebAssembly Support
-
-WebAssembly build for browser extensions:
+### Building for Different Platforms
 
 ```bash
-# Build for WebAssembly
-GOOS=js GOARCH=wasm go build -o vipe.wasm ./cmd/vipe-wasm
+# Linux
+GOOS=linux GOARCH=amd64 go build -o vipe-linux-amd64 ./cmd/vipe
+
+# macOS
+GOOS=darwin GOARCH=arm64 go build -o vipe-darwin-arm64 ./cmd/vipe
+
+# Windows
+GOOS=windows GOARCH=amd64 go build -o vipe-windows-amd64.exe ./cmd/vipe
+
+# WebAssembly
+GOOS=js GOARCH=wasm go build -o vipe.wasm ./cmd/vipe
 ```
 
 ## License
