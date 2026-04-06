@@ -1,0 +1,4 @@
+Hello world, this is a test for semantic search
+Machine learning and AI are transforming technology
+The cat sat on the mat
+Dogs are loyal companions

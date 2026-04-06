@@ -1,0 +1,39 @@
+# Models directory (large binary files)
+models/
+
+# Index cache directory
+.vipedb/
+
+# Configuration (contains local paths)
+.vipedb.yaml
+
+# Build artifacts
+vipe
+vipe.exe
+vipe.wasm
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace
+go.work
+
+# Profiling files
+*.prof
+cpu_profile.prof
+mem_profile.prof
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
