@@ -156,20 +156,17 @@ jobs:
         with:
           path: ./artifacts
 
-      - name: Prepare release assets
+      - name: Flatten release assets
         run: |
-          cd ./artifacts
-          for dir in */; do
-            cd "$dir"
-            zip -r ../${dir%/}.zip .
-            cd ..
-          done
-          ls -la *.zip
+          mkdir -p ./flat_artifacts
+          find ./artifacts -type f -name 'vipe-*' -exec cp {} ./flat_artifacts/ \;
+          find ./artifacts -type f -name 'vipe.wasm' -exec cp {} ./flat_artifacts/ \;
+          ls -la ./flat_artifacts/
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: ./artifacts/*.zip
+          files: ./flat_artifacts/vipe-*
           generate_release_notes: true
           draft: false
           prerelease: false
@@ -190,14 +187,14 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
+      - name: Configure Git to access private modules
+        run: |
+          git config --global url."https://${{ secrets.PAT_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
       - name: Configure GOPRIVATE
         run: |
-          go env -w GOPRIVATE=github.com/GoMemPipe/memrag
-          go env -w GOPRIVATE=github.com/GoMemPipe/mempipe
+          go env -w GOPRIVATE=github.com/GoMemPipe/memrag,github.com/GoMemPipe/mempipe
 
       - name: Publish to Go Proxy
         run: |
-          git tag $(git describe --tags --abbrev=0)
-          GOPROXY=proxy.golang.org go mod download
-        env:
-          GOPROXY: https://proxy.golang.org
+          GOPROXY=https://proxy.golang.org,direct go list -m github.com/hashemzargari/vipedb@${{ github.ref_name }}
