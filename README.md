@@ -4,6 +4,10 @@
 
 ![VipeDB demo](demo.gif)
 
+### Stream Mode: Semantic Search over Container Logs
+
+![VipeDB Stream Demo](stream_demo.gif)
+
 ## Features
 
 - **Single Binary**: Download and run — no complex setup, no runtime dependencies
@@ -67,7 +71,13 @@ You get production-grade embedding inference that starts in milliseconds, consum
 
 ## Installation
 
-### Option A: Binary (Recommended)
+### Option A: Go Install
+
+```bash
+go install github.com/hashemzargari/vipedb/cmd/vipe@latest
+```
+
+### Option B: Binary
 
 ```bash
 # Download and make executable (Linux/macOS)
@@ -84,7 +94,7 @@ That's it. `vipe init` handles everything:
 
 You can run `vipe` from **any directory** — all data lives in `~/.vipe/` (global) unless a local `.vipe/` workspace exists in the current directory (see [Local Workspaces](#local-workspaces) below).
 
-### Option B: Docker
+### Option C: Docker
 
 ```bash
 # Build the image

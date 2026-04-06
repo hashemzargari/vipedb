@@ -37,3 +37,7 @@ mem_profile.prof
 # OS
 .DS_Store
 Thumbs.db
+
+$ tmp
+
+demo/
