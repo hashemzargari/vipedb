@@ -1,0 +1,26 @@
+# Example: Run VipeDB v0.3.0 as a log analyzer sidecar alongside your application.
+#
+# Usage:
+#   docker compose up -d
+#   docker compose exec vipedb vipe init
+#   docker compose logs my-app | docker compose exec -T vipedb vipe stream
+#   docker compose exec vipedb vipe search "error"
+
+services:
+  vipedb:
+    build: .
+    image: vipedb:latest
+    volumes:
+      - vipe-data:/data/.vipe
+    entrypoint: ["tini", "--"]
+    command: ["sleep", "infinity"]
+    restart: unless-stopped
+
+  # Replace this with your actual application
+  # my-app:
+  #   image: your-app:latest
+  #   logging:
+  #     driver: json-file
+
+volumes:
+  vipe-data:

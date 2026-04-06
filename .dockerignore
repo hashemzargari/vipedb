@@ -1,0 +1,30 @@
+# VipeDB data
+*.bin
+*.tmp
+
+# Go build artifacts
+*.exe
+*.test
+*.out
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+
+# Docs
+*.md
+LICENSE
+demo.gif
+
+# Test artifacts
+test.txt

@@ -16,10 +16,9 @@ import (
 	"github.com/hashemzargari/vipedb/internal/embedding"
 	"github.com/hashemzargari/vipedb/internal/output"
 	"github.com/hashemzargari/vipedb/internal/stream"
+	"github.com/hashemzargari/vipedb/internal/version"
 	"github.com/hashemzargari/vipedb/pkg/vector"
 )
-
-const version = "0.1.0"
 
 var cfg *config.Config
 
@@ -28,14 +27,14 @@ func main() {
 }
 
 func run() int {
-	configPath := flag.String("config", ".vipedb.yaml", "path to config file")
+	configPath := flag.String("config", "", "path to config file (default: ~/.vipe/config.yaml)")
 	showVersion := flag.Bool("version", false, "show version")
 	force := flag.Bool("force", false, "force reindex even if cached")
 	verbose := flag.Bool("verbose", false, "enable verbose output")
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("vipe version %s\n", version)
+		fmt.Printf("vipe version %s\n", version.Version)
 		return 0
 	}
 
@@ -48,6 +47,14 @@ func run() int {
 
 	if *verbose {
 		cfg.General.Verbose = true
+	}
+
+	// Print workspace log line so the user always knows which data dir is active.
+	ws := config.ResolveWorkspace()
+	if ws.IsLocal {
+		fmt.Fprintf(os.Stderr, "[vipe] Using local workspace: %s\n", ws.Path)
+	} else {
+		fmt.Fprintf(os.Stderr, "[vipe] Using global workspace: %s\n", ws.Path)
 	}
 
 	if len(flag.Args()) == 0 {
@@ -79,13 +86,21 @@ func run() int {
 }
 
 func printUsage() {
-	fmt.Println(`vipe - AI-powered semantic search & real-time log analyzer
+	home := config.VipeHome()
+	ws := config.ResolveWorkspace()
+	wsKind := "global"
+	if ws.IsLocal {
+		wsKind = "local"
+	}
+	fmt.Printf(`vipe %s - AI-powered semantic search & real-time log analyzer
+
+Active workspace (%s): %s
 
 Usage:
   vipe <command> [options]
 
 Commands:
-  init              Initialize a new vipe configuration
+  init              Initialize VipeDB (global by default, --local for project)
   index             Index files or text
   search            Search indexed documents
   grep              Semantic grep (search for pattern in files)
@@ -94,8 +109,12 @@ Commands:
 
 Global Options:
   -force            Force reindex even if file is cached
-  -config           Path to config file (default: .vipedb.yaml)
+  -config           Path to config file (default: %s/config.yaml)
   -verbose          Enable verbose output
+  -version          Show version
+
+Init Options:
+  --local           Create a .vipe workspace in the current directory
 
 Search/Grep Options:
   --json            Output results as strict JSON (for agents & pipelines)
@@ -108,26 +127,96 @@ Stream Options:
 
 Examples:
   vipe init
+  vipe init --local
   vipe index file.txt
   vipe search "connection timeout"
   vipe search --json "database error" | jq .
   vipe grep -r "error handling" ./src/
   tail -f /var/log/syslog | vipe stream
   vipe stream --tail /var/log/app.log
-  vipe cache list`)
+  vipe cache list
+`, version.Version, wsKind, ws.Path, home)
 }
 
 func cmdInit(cfg *config.Config, configPath string) int {
-	if err := cfg.Save(configPath); err != nil {
+	// Check for --local flag in remaining args.
+	local := false
+	for _, a := range flag.Args()[1:] {
+		if a == "--local" {
+			local = true
+		}
+	}
+
+	var targetRoot string
+	if local {
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error getting working directory: %v\n", err)
+			return 1
+		}
+		targetRoot = filepath.Join(cwd, ".vipe")
+		fmt.Println("Initializing local VipeDB workspace...")
+	} else {
+		targetRoot = config.GlobalHome()
+		fmt.Println("Initializing VipeDB (global)...")
+	}
+
+	// Create directory structure.
+	if err := config.EnsureHome(targetRoot); err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating directory structure: %v\n", err)
+		return 1
+	}
+	fmt.Printf("  Home directory: %s\n", targetRoot)
+
+	// Build config for the target root and save it.
+	initCfg := config.DefaultFor(targetRoot)
+	cfgPath := configPath
+	if cfgPath == "" {
+		cfgPath = filepath.Join(targetRoot, "config.yaml")
+	}
+	if err := initCfg.Save(cfgPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
 		return 1
 	}
+	fmt.Printf("  Config: %s\n", cfgPath)
+	fmt.Printf("  Models: %s\n", initCfg.Models.Directory)
+	fmt.Printf("  Index:  %s\n", initCfg.Index.Directory)
+	fmt.Printf("  Cache:  %s\n", initCfg.Cache.Directory)
 
-	fmt.Printf("Initialized vipe configuration at %s\n", configPath)
-	fmt.Printf("Models directory: %s\n", cfg.Models.Directory)
-	fmt.Printf("Index directory: %s\n", cfg.Index.Directory)
-	fmt.Printf("Cache directory: %s\n", cfg.Cache.Directory)
-	fmt.Printf("Cache retention: %s\n", cfg.Cache.Retention)
+	// Check if default model is already present.
+	defaultDir := "bge-small-en-v1.5"
+	if config.IsModelInstalled(initCfg.Models.Directory, defaultDir) {
+		fmt.Printf("\n  Default model already installed: %s\n", defaultDir)
+		fmt.Println("\nVipeDB is ready. Run 'vipe search \"your query\"' to get started.")
+		return 0
+	}
+
+	// Download default model.
+	fmt.Println("\nDownloading default model (BAAI/bge-small-en-v1.5)...")
+	models := config.AvailableModels()
+	spec := models[0] // bge-small-en-v1.5
+
+	var lastFile string
+	err := config.DownloadModel(initCfg.Models.Directory, spec, func(n int64, file string) {
+		if file != lastFile {
+			if lastFile != "" {
+				fmt.Println(" done")
+			}
+			fmt.Printf("  Downloading %s...", file)
+			lastFile = file
+		}
+	})
+	if lastFile != "" {
+		fmt.Println(" done")
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\nError downloading model: %v\n", err)
+		fmt.Fprintln(os.Stderr, "You can manually download models from: https://huggingface.co/hashemzargari/mpmodels")
+		fmt.Fprintf(os.Stderr, "Place model files in: %s/<model-name>/\n", initCfg.Models.Directory)
+		return 1
+	}
+
+	fmt.Println("\nVipeDB is ready. Run 'vipe search \"your query\"' to get started.")
 	return 0
 }
 
