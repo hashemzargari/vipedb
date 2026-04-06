@@ -1,10 +1,10 @@
 # VipeDB
 
-**VipeDB** is an all-in-one semantic search tool that combines a vector database and embedding models in a single executable binary. It's designed to be a drop-in replacement for `grep` with semantic search capabilities.
+**VipeDB** is an all-in-one semantic search tool that combines a vector database and embedding models in a single executable binary. It's designed to be a drop-in replacement for `grep` with semantic search capabilities — and it's built on a stack that most Python-based tools can't touch.
 
 ## Features
 
-- **Single Binary**: Download and run - no complex setup
+- **Single Binary**: Download and run — no complex setup, no runtime dependencies
 - **Built-in Embedding Models**: Includes multilingual-e5-small-fp16 and bge-small-en-v1.5
 - **YAML Configuration**: Easy-to-use config file for customizing models and settings
 - **Grep-like Interface**: Familiar command-line interface for semantic search
@@ -12,6 +12,48 @@
 - **Intelligent Caching**: SHA256-based file hashing, auto-skip cached files
 - **Cache Management**: Manual and automatic cache cleanup with configurable retention
 - **Cross-platform**: Works on Linux, macOS, and Windows (WebAssembly support planned)
+
+## Why VipeDB? (Under the Hood)
+
+Most semantic search tools are wrappers around Python runtimes, PyTorch, and heavy CUDA stacks. VipeDB takes a completely different path.
+
+### Powered by [MemPipe](https://github.com/GoMemPipe/mempipe) — Zero-GC, Arena-Backed Inference
+
+At its core, VipeDB runs on **MemPipe**: a zero-dependency, zero-allocation, arena-backed pipeline and ONNX inference engine written **purely in Go**. No Python. No C++ bindings. No CGo. No PyTorch.
+
+A single `make([]byte, N)` allocates the entire working set. Every subsequent tensor read/write is a raw pointer dereference — no GC, no interface boxing, no hidden allocations.
+
+Key engine properties:
+
+| Property | Detail |
+|----------|--------|
+| **Zero allocations** | Verified `0 allocs/op` on every hot path by CI |
+| **33 neural-network operators** | Full transformer support, including GELU, LayerNorm, BatchedMatMul, etc. |
+| **Hardware-accelerated MatMul** | SIMD 4×4 micro-kernel on native; WebGPU compute shader on WASM |
+| **Custom `.mpmodel` format** | INT8/FP16 quantization, ONNX-sourced — no runtime conversion overhead |
+| **Zero external dependencies** | Pure Go — `go get` and you're done |
+| **Deterministic execution** | Same inputs → same outputs, always |
+
+This is the reason VipeDB can ship as a single binary and still outperform Python-based tools with significantly lower memory usage.
+
+### Powered by [MemRAG](https://github.com/GoMemPipe/memrag) — High-Performance Embedding Inference
+
+The embedding layer is handled by **MemRAG**: a Go library purpose-built for zero-allocation embedding inference in retrieval-augmented generation (RAG) applications. It runs directly on MemPipe and exposes a clean, high-performance API for generating text embeddings.
+
+What makes it fast:
+
+- **Zero-Allocation Hot Path**: Pre-allocated buffers for tokenizer and pooling operations — GC pressure is eliminated by design
+- **Dynamic Sequence Length**: The engine reshapes to the actual token count, so short inputs are processed faster — no wasted compute on padding
+- **Multiple Pooling Strategies**: Mean pooling, CLS pooling, and raw output — pick what your model needs
+- **Concurrent Inference**: Thread-safe engine pool with bounded concurrency via semaphores, ready for high-throughput workloads
+- **Extensible Operator Registry**: Pluggable operator system for custom inference operations
+- **Multiple Tokenizer Support**: WordPiece (BERT), BPE, and SentencePiece tokenizers built in
+
+### The net result
+
+> A zero-dependency, ultra-low memory footprint, single-binary semantic search engine — no Python environment to manage, no CUDA drivers to install, no 10 GB PyTorch download.
+
+You get production-grade embedding inference that starts in milliseconds, consumes a fraction of the RAM of traditional tools, and fits in your CI pipeline without a second thought.
 
 ## Installation
 
@@ -282,11 +324,24 @@ GOOS=windows GOARCH=amd64 go build -o vipe-windows-amd64.exe ./cmd/vipe
 GOOS=js GOARCH=wasm go build -o vipe.wasm ./cmd/vipe
 ```
 
+## Related Projects
+
+- **[MemPipe](https://github.com/GoMemPipe/mempipe)** — Zero-GC, arena-backed pipeline and ONNX inference engine for Go. Pure Go, zero external dependencies, `0 allocs/op` verified by CI. Powers VipeDB's model execution layer with 33 neural-network operators and hardware-accelerated MatMul (SIMD / WebGPU).
+
+- **[MemRAG](https://github.com/GoMemPipe/memrag)** — High-performance, zero-allocation embedding inference library for Go, purpose-built for RAG applications. Leverages MemPipe to run ONNX-based embedding models with minimal memory overhead. Provides the tokenizers, pooling strategies, and concurrent engine pool that VipeDB uses to generate embeddings at speed.
+
+## Support the Project
+
+VipeDB, MemPipe, and MemRAG are free, open-source projects. If they saved you CPU credits, infrastructure costs, or just a lot of headache, consider supporting the work that makes it possible.
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-gomempipe-orange?style=flat&logo=buy-me-a-coffee)](https://buymeacoffee.com/gomempipe)
+
+We also accept cryptocurrency donations:
+
+- **Bitcoin**: `bc1qy5yg97y6utrxm84erfhvyjg8e0saqg83ae6286`
+
+Your support helps keep the project maintained, documented, and growing. Every contribution — big or small — is genuinely appreciated.
+
 ## License
 
 MIT License
-
-## Related Projects
-
-- [MemRAG](https://github.com/GoMemPipe/memrag) - High-performance embedding inference
-- [MemPipe](https://github.com/GoMemPipe/mempipe) - ONNX inference engine
