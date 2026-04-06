@@ -31,7 +31,7 @@ Download pre-converted `.mpmodel` files from our [release page](https://github.c
 mkdir -p models
 
 # Download models from GitHub releases
-# Visit: https://github.com/hashemzargari/vipedb/vipedb/releases
+# Visit: https://github.com/hashemzargari/vipedb/releases
 
 # Or download specific models:
 # bge-small-english: https://github.com/hashemzargari/vipedb/releases/latest/download/bge-small-en-v1.5.zip
