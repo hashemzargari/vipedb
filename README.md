@@ -22,16 +22,32 @@
 chmod +x vipe
 ```
 
-### 2. Download Models (Optional)
+### 2. Download Models
 
-Models are included by default. To add more models:
+Download pre-converted `.mpmodel` files from our [release page](https://github.com/hashemzargari/vipedb/vipedb/releases):
 
 ```bash
 # Create models directory
 mkdir -p models
 
-# Download and place model files in models/ directory
-# Each model should have: model.mpmodel and vocab.txt
+# Download models from GitHub releases
+# Visit: https://github.com/hashemzargari/vipedb/vipedb/releases
+
+# Or download specific models:
+# bge-small-english: https://github.com/hashemzargari/vipedb/releases/latest/download/bge-small-en-v1.5.zip
+# multilingual-e5-small: https://github.com/hashemzargari/vipedb/releases/latest/download/multilingual-e5-small-fp16.zip
+
+# Extract and place in models/ directory
+# Each model directory should contain: model.mpmodel and vocab.txt
+#
+# Expected structure:
+# models/
+# ├── bge-small-en-v1.5/
+# │   ├── model.mpmodel
+# │   └── vocab.txt
+# └── multilingual-e5-small-fp16/
+#     ├── model.mpmodel
+#     └── vocab.txt
 ```
 
 ### 3. Initialize Configuration

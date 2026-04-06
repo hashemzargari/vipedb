@@ -8,7 +8,7 @@ models/
 .vipedb.yaml
 
 # Build artifacts
-vipe
+
 vipe.exe
 vipe.wasm
 *.exe
