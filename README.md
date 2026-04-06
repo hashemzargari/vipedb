@@ -2,6 +2,8 @@
 
 **VipeDB** is an all-in-one semantic search tool that combines a vector database and embedding models in a single executable binary. It's designed to be a drop-in replacement for `grep` with semantic search capabilities — and it's built on a stack that most Python-based tools can't touch.
 
+![VipeDB demo](demo.gif)
+
 ## Features
 
 - **Single Binary**: Download and run — no complex setup, no runtime dependencies
