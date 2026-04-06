@@ -66,28 +66,29 @@ chmod +x vipe
 
 ### 2. Download Models
 
-Download pre-converted `.mpmodel` files from our [release page](https://github.com/hashemzargari/vipedb/vipedb/releases):
+All pre-converted `.mpmodel` files are hosted on Hugging Face:
+
+**[https://huggingface.co/hashemzargari/mpmodels](https://huggingface.co/hashemzargari/mpmodels)**
+
+Each model is available in three quantization variants — pick the one that fits your hardware:
+
+| Variant | Suffix | Description |
+|---------|--------|-------------|
+| FP32 (default) | _(none)_ | Full precision, highest accuracy |
+| FP16 | `-fp16` | Half precision, ~2× smaller, negligible accuracy loss |
+| INT8 | `-int8` | 8-bit quantized, smallest size, fastest on CPU |
 
 ```bash
 # Create models directory
 mkdir -p models
 
-# Download models from GitHub releases
-# Visit: https://github.com/hashemzargari/vipedb/releases
-
-# Or download specific models:
-# bge-small-english: https://github.com/hashemzargari/vipedb/releases/latest/download/bge-small-en-v1.5.zip
-# multilingual-e5-small: https://github.com/hashemzargari/vipedb/releases/latest/download/multilingual-e5-small-fp16.zip
-
-# Extract and place in models/ directory
-# Each model directory should contain: model.mpmodel and vocab.txt
+# Download a model folder from Hugging Face (example: bge-small-en-v1.5 FP16)
+# Visit https://huggingface.co/hashemzargari/mpmodels and download the folder
+# for your chosen model, then place it under models/
 #
 # Expected structure:
 # models/
-# ├── bge-small-en-v1.5/
-# │   ├── model.mpmodel
-# │   └── vocab.txt
-# └── multilingual-e5-small-fp16/
+# └── bge-small-en-v1.5-fp16/
 #     ├── model.mpmodel
 #     └── vocab.txt
 ```
@@ -286,13 +287,16 @@ vipe (CLI)
 
 ## Model Support
 
-VipeDB includes support for:
+All models are available at [huggingface.co/hashemzargari/mpmodels](https://huggingface.co/hashemzargari/mpmodels) in FP32, FP16, and INT8 variants.
 
-| Model | Dimensions | Max Length | Language |
-|-------|-----------|------------|----------|
-| BAAI/bge-small-en-v1.5 | 384 | 512 | English |
-| intfloat/multilingual-e5-small-fp16 | 384 | 512 | Multilingual |
-| sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 | 384 | 128 | Multilingual |
+| Model | Dimensions | Max Length | Language | Variants |
+|-------|-----------|------------|----------|----------|
+| BAAI/bge-small-en-v1.5 | 384 | 512 | English | fp32, fp16, int8 |
+| BAAI/bge-large-en-v1.5 | 1024 | 512 | English | fp32, fp16, int8 |
+| intfloat/multilingual-e5-small | 384 | 512 | Multilingual | fp32, fp16, int8 |
+| intfloat/multilingual-e5-large | 1024 | 512 | Multilingual | fp32, fp16, int8 |
+| nomic-ai/nomic-embed-text-v1.5 | 768 | 8192 | English | fp32, fp16, int8 |
+| sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 | 384 | 128 | Multilingual | fp32, fp16, int8 |
 
 ## Building from Source
 
